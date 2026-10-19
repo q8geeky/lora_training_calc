@@ -3,7 +3,7 @@
 Training-step counts are arithmetic, not a promise of quality or VRAM fit.
 Different trainers may have different rules for regularization/class images.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from math import ceil, isfinite
 
 
@@ -72,3 +72,16 @@ def starting_repeats(images: int, target_exposures_per_epoch: int = 200) -> int:
     if images < 1 or target_exposures_per_epoch < 1:
         raise ValueError("Image count and target exposures must be positive.")
     return min(40, max(1, ceil(target_exposures_per_epoch / images)))
+
+
+def epochs_for_target_steps(plan: TrainingPlan, target_steps: int) -> int:
+    """Minimum whole epochs for a target number of optimizer updates.
+
+    Keeps batch, accumulation, repeats, images and every other value unchanged.
+    This is workload arithmetic, not a recommendation to train that long.
+    """
+    plan.validate()
+    if isinstance(target_steps, bool) or not isinstance(target_steps, int) or not 1 <= target_steps <= 1_000_000_000:
+        raise ValueError("Target optimizer steps must be a whole number from 1 to 1,000,000,000.")
+    per_epoch = estimate(replace(plan, epochs=1)).optimizer_steps_per_epoch
+    return ceil(target_steps / per_epoch)
