@@ -40,6 +40,20 @@ class TrainingMathTests(unittest.TestCase):
         self.assertEqual(starting_repeats(500), 1)
         self.assertEqual(starting_repeats(1), 40)
 
+    def test_match_target_uses_minimum_epochs(self):
+        from training_core import epochs_for_target_steps
+        p=plan(images=23, repeats=10, epochs=7, batch_size=4, gradient_accumulation=2)
+        self.assertEqual(epochs_for_target_steps(p, 200), 7)
+        self.assertEqual(epochs_for_target_steps(p, 203), 7)
+        self.assertEqual(epochs_for_target_steps(p, 204), 8)
+        self.assertEqual(epochs_for_target_steps(p, 1), 1)
+
+    def test_invalid_target_rejected(self):
+        from training_core import epochs_for_target_steps
+        for target in [0, -1, True, 1.5, 1_000_000_001]:
+            with self.subTest(target=target), self.assertRaises(ValueError):
+                epochs_for_target_steps(plan(), target)
+
 
 if __name__ == "__main__":
     unittest.main()
