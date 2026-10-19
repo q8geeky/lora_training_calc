@@ -1,94 +1,81 @@
+"""Interactive front-end for the deterministic LoRA workload calculator."""
 import tkinter as tk
 from tkinter import ttk, messagebox
+from training_core import TrainingPlan, estimate, starting_repeats
 
-def calculate_repeats(num_images):
-    """Calculate the number of repeats based on the number of dataset images."""
-    if num_images <= 20:
-        return 40
-    elif num_images >= 100:
-        return 10
-    else:
-        # For images between 20 and 100, we'll use an average of 70 and 100.
-        return (70 + 100) // 2
 
-def calculate_batch_size(vram):
-    """Calculate the batch size based on VRAM."""
-    # Directly return the VRAM as batch size (assuming VRAM is a good proxy for batch size).
-    return int(vram)
+def main():
+    root = tk.Tk()
+    root.title("LoRA Training Planner")
+    root.minsize(540, 560)
+    root.columnconfigure(1, weight=1)
+    fields = [
+        ("Dataset images", "images", "25"),
+        ("Repeats per image", "repeats", "8"),
+        ("Epochs", "epochs", "10"),
+        ("Batch size (micro-batch)", "batch_size", "2"),
+        ("Gradient accumulation", "gradient_accumulation", "1"),
+        ("Learning rate", "learning_rate", "0.0001"),
+        ("Network rank", "rank", "16"),
+        ("Network alpha", "alpha", "16"),
+        ("GPU VRAM (GB, informational)", "vram", "8"),
+    ]
+    vars_ = {}
+    for row,(caption,key,default) in enumerate(fields):
+        ttk.Label(root,text=caption).grid(row=row,column=0,sticky="w",padx=14,pady=7)
+        variable=tk.StringVar(value=default)
+        vars_[key]=variable
+        ttk.Entry(root,textvariable=variable).grid(row=row,column=1,sticky="ew",padx=14,pady=7)
+    result=tk.StringVar(value="Enter the actual settings used by your trainer.")
+    note=("VRAM cannot determine batch size on its own. Estimates assume each epoch\n"
+          "flushes a partial batch/gradient accumulation group.")
+    ttk.Label(root,text=note,foreground="#555555",justify="left").grid(
+        row=len(fields),column=0,columnspan=2,sticky="w",padx=14,pady=8)
 
-def calculate_epoch():
-    """Calculate the epoch, fixed between 5 and 10."""
-    # Return the average of 5 and 10 as a general guideline.
-    return (5 + 10) // 2
+    def calculate():
+        try:
+            plan=TrainingPlan(
+                images=int(vars_["images"].get()),
+                repeats=int(vars_["repeats"].get()),
+                epochs=int(vars_["epochs"].get()),
+                batch_size=int(vars_["batch_size"].get()),
+                gradient_accumulation=int(vars_["gradient_accumulation"].get()),
+                learning_rate=float(vars_["learning_rate"].get()),
+                rank=int(vars_["rank"].get()),
+                alpha=int(vars_["alpha"].get()),
+            )
+            vram=float(vars_["vram"].get())
+            if not (0 < vram < float("inf")):
+                raise ValueError("VRAM must be a positive finite number.")
+            data=estimate(plan)
+            result.set(
+                f"Samples per epoch: {data.images_per_epoch:,}\n"
+                f"Batches per epoch: {data.batches_per_epoch:,}\n"
+                f"Optimizer updates per epoch: {data.optimizer_steps_per_epoch:,}\n"
+                f"Total optimizer updates: {data.total_optimizer_steps:,}\n"
+                f"Total sample exposures: {data.total_image_exposures:,}\n"
+                f"Effective batch size: {data.effective_batch_size:,}\n"
+                f"Learning rate: {plan.learning_rate:g}\n"
+                f"LoRA rank / alpha: {plan.rank} / {plan.alpha}"
+            )
+        except (ValueError,OverflowError) as exc:
+            messagebox.showerror("Invalid settings",str(exc))
 
-def calculate_learning_rate(batch_size):
-    """Calculate the learning rate based on the batch size."""
-    # Learning rate is proportional to the batch size.
-    return 0.0002 * batch_size
+    def suggest():
+        try:
+            vars_["repeats"].set(str(starting_repeats(int(vars_["images"].get()))))
+        except ValueError as exc:
+            messagebox.showerror("Invalid image count",str(exc))
 
-def calculate_network_rank_and_alpha(num_images):
-    """Calculate the network rank and alpha based on the number of dataset images."""
-    # Determine network rank based on the number of images.
-    network_rank = 64 if num_images < 25 else 128
-    # Network alpha is half the network rank.
-    network_alpha = network_rank // 2
-    return network_rank, network_alpha
+    controls=ttk.Frame(root)
+    controls.grid(row=len(fields)+1,column=0,columnspan=2,pady=12)
+    ttk.Button(controls,text="Calculate",command=calculate).pack(side="left",padx=8)
+    ttk.Button(controls,text="Suggest repeats",command=suggest).pack(side="left",padx=8)
+    ttk.Label(root,textvariable=result,justify="left").grid(
+        row=len(fields)+2,column=0,columnspan=2,sticky="w",padx=15,pady=10)
+    calculate()
+    root.mainloop()
 
-def calculate_steps(num_images, repeats):
-    """Calculate the total number of steps."""
-    return num_images * repeats
 
-def calculate_regularization_images(num_images, repeats):
-    """Calculate the number of regularization dataset images."""
-    # 2 regularization images for every dataset image.
-    return (num_images * repeats) * 2
-
-def calculate_max_training_step(num_images, repeats, batch_size, epoch):
-    """Calculate the maximum training step."""
-    return ((num_images * repeats) * 1) / (batch_size / (1 * epoch * batch_size))
-
-def calculate_parameters():
-    """Calculate and display all the parameters."""
-    try:
-        vram = float(vram_entry.get())
-        num_images = int(num_images_entry.get())
-        
-        # Calculations
-        repeats = calculate_repeats(num_images)
-        batch_size = calculate_batch_size(vram)
-        epoch = calculate_epoch()
-        learning_rate = calculate_learning_rate(batch_size)
-        network_rank, network_alpha = calculate_network_rank_and_alpha(num_images)
-        steps = calculate_steps(num_images, repeats)
-        regularization_images = calculate_regularization_images(num_images, repeats)
-        max_training_step = calculate_max_training_step(num_images, repeats, batch_size, epoch)
-        
-        # Display results
-        results_text.set(f"Repeats: {repeats}\nBatch Size: {batch_size}\nEpoch: {epoch}\nLearning Rate: {learning_rate}\nNetwork Rank: {network_rank}\nNetwork Alpha: {network_alpha}\nSteps: {steps}\nRegularization Dataset Images: {regularization_images}\nMax Training Step: {max_training_step}")
-    
-    except ValueError:
-        messagebox.showerror("Error", "Please enter valid values.")
-    except ZeroDivisionError:
-        messagebox.showerror("Error", "Division by zero detected. Please enter valid values.")
-
-# Create main window
-root = tk.Tk()
-root.title("Lora Training Parameters Calculator")
-
-# Create and place labels, entries, and button
-ttk.Label(root, text="VRAM:").grid(row=0, column=0, sticky="w", padx=10, pady=5)
-vram_entry = ttk.Entry(root)
-vram_entry.grid(row=0, column=1, padx=10, pady=5)
-
-ttk.Label(root, text="Number of Dataset Images:").grid(row=1, column=0, sticky="w", padx=10, pady=5)
-num_images_entry = ttk.Entry(root)
-num_images_entry.grid(row=1, column=1, padx=10, pady=5)
-
-calculate_button = ttk.Button(root, text="Calculate", command=calculate_parameters)
-calculate_button.grid(row=2, column=0, columnspan=2, pady=10)
-
-results_text = tk.StringVar()
-results_label = ttk.Label(root, textvariable=results_text)
-results_label.grid(row=3, column=0, columnspan=2, padx=10, pady=5)
-
-root.mainloop()
+if __name__=="__main__":
+    main()
